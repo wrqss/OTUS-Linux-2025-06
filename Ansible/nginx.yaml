@@ -1,5 +1,5 @@
 - name: Install and configure nginx
-  hosts: 192.168.100.103
+  hosts: web
   vars_files:
     - vars/nginx-vault.yml
   become: true
