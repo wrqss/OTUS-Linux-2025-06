@@ -1,0 +1,34 @@
+- name: Настройка собственного демона
+  hosts: web
+  become: yes
+  tasks:
+    - copy:
+        src: templates/watchlog
+        dest: /etc/default/watchlog
+    - copy:
+        src: templates/watchlog.sh
+        dest: /opt/watchlog.sh
+        mode: '755'
+    - copy:
+        src: templates/watchlog.service
+        dest: /etc/systemd/system/watchlog.service
+        mode: '0644'
+      notify: Перезапустить mydaemon
+    - copy:
+        src: templates/watchlog.timer
+        dest: /etc/systemd/system/watchlog.timer
+        mode: '0644'
+
+    - command: systemctl daemon-reload
+      notify: Перезапустить watchlog
+
+    - systemd:
+        name: watchlog
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Перезапустить watchlog
+      service:
+        name: watchlog
+        state: restarted
