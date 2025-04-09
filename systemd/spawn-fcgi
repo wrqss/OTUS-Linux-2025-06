@@ -1,0 +1,55 @@
+- name: утановка пакетов
+  hosts: web
+  become: yes
+
+  tasks:
+    - name: Обновить список пакетов
+      apt:
+        update_cache: yes
+
+
+    - name: Установить пакеты
+      apt:
+        name:
+          - apache2
+          - php
+          - php-cgi
+          - php-cli
+          - libapache2-mod-fcgid
+          - spawn-fcgi
+        state: present
+
+    - name: Перезапустить Apache для применения изменений
+      service:
+        name: apache2
+        state: restarted
+
+  hosts: web
+  become: yes
+  tasks:
+     - name: Создать директорию /etc/spawn-fcgi
+       file:
+         path: /etc/spawn-fcgi
+         state: directory
+         mode: '0755'  
+     - copy:
+        src: templates/fcgi.conf
+        dest: /etc/spawn-fcgi/fcgi.conf
+        mode: '0644'
+     - copy:
+        src: templates/spawn-fcgi.service
+        dest: /etc/systemd/system/spawn-fcgi.service
+        mode: '0644'
+       notify: Перезапустить юнит
+
+     - command: systemctl daemon-reload
+       notify: Перезапустить юнит
+     - systemd:
+        name: spawn-fcgi.service
+        state: started
+        enabled: yes
+  handlers:
+        - name: Перезапустить юнит
+          service:
+            name: spawn-fcgi.service
+            state: restarted
