@@ -1,0 +1,39 @@
+- name: Настройка двух экземпляров Nginx
+  hosts: web
+  become: yes
+  tasks:
+    - name: Установить Nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Скопировать перый файл конфигурации
+      copy:
+        src: files/nginx-first.conf
+        dest: /etc/nginx/nginx-instance1.conf
+
+    - name: Скопировать второй файл конфигурации
+      copy:
+        src: files/nginx-second.conf
+        dest: /etc/nginx/nginx-instance2.conf
+
+    - name: Создать файл для демона
+      copy:
+        src: files/nginx@.service
+        dest: /etc/systemd/system/nginx@.service
+        
+    - name: Перезагрузить systemd для применения новой службы
+      command: systemctl daemon-reload
+
+    - name: Включить и запустить первый экземпляр Nginx
+      systemd:
+        name: nginx@instance1
+        enabled: yes
+        state: started
+
+    - name: Включить и запустить второй экземпляр Nginx
+      systemd:
+        name: nginx@instance2
+        enabled: yes
+        state: started
