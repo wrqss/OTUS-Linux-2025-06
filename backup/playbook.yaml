@@ -1,0 +1,113 @@
+---
+- name: Configure BorgBackup on backup and client servers
+  hosts: all
+  become: yes
+  vars:
+    backup_ip: "192.168.111.113"
+    client_ip: "192.168.111.103"
+    borg_user: "borg"
+    passphrase: "Otus1234"
+    backup_dir: "/var/backup"
+    backup_target: "/etc"
+
+  tasks:
+    - name: Install BorgBackup on all hosts
+      apt:
+        name: borgbackup
+        update_cache: yes
+
+- name: Configure backup server
+  hosts: "{{ backup_ip }}"
+  become: yes
+  tasks:
+    - name: Create borg user
+      user:
+        name: "{{ borg_user }}"
+        shell: /bin/bash
+
+    - name: Format disk
+      community.general.filesystem:
+        fstype: ext4
+        device: /dev/sdc
+      tags:
+        - backup point
+
+    - name: Mount disk
+      ansible.posix.mount:
+        path: /var/backup
+        src: /dev/sdc
+        fstype: ext4
+        state: mounted
+      tags: 
+        - backup point
+    
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: "{{ borg_user }}"
+        group: "{{ borg_user }}"
+        mode: '0755'
+
+    - name: Create .ssh directory for borg user
+      file:
+        path: "/home/{{ borg_user }}/.ssh"
+        state: directory
+        owner: "{{ borg_user }}"
+        group: "{{ borg_user }}"
+        mode: '0700'
+
+    - name: Create authorized_keys file
+      file:
+        path: "/home/{{ borg_user }}/.ssh/authorized_keys"
+        state: touch
+        owner: "{{ borg_user }}"
+        group: "{{ borg_user }}"
+        mode: '0600'
+
+- name: Configure client server
+  hosts: "{{ client_ip }}"
+  become: yes
+  tasks:
+    - name: Generate SSH key
+      command: "ssh-keygen -t ed25519 -f ~/.ssh/id_borg -N ''"
+      args:
+        creates: "~/.ssh/id_borg.pub"
+
+    - name: Add SSH public key to backup's authorized_keys
+      authorized_key:
+        user: "{{ borg_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_borg.pub') }}"
+        path: "/home/{{ borg_user }}/.ssh/authorized_keys"
+      delegate_to: "{{ backup_ip }}"
+      become: yes
+
+    - name: Initialize Borg repository
+      command: "borg init --encryption=repokey borg@{{ backup_ip }}:{{ backup_dir }}"
+      args:
+        creates: "{{ backup_dir }}"
+
+    - name: Perform test backup
+      command: "borg create --stats --list borg@{{ backup_ip }}:{{ backup_dir }}::'etc-{now:%Y-%m-%d_%H:%M:%S}' {{ backup_target }}"
+
+    - name: Create systemd service
+      template:
+        src: "borg-backup.service.j2"
+        dest: "/etc/systemd/system/borg-backup.service"
+        mode: '0644'
+
+    - name: Create systemd timer
+      template:
+        src: "borg-backup.timer.j2"
+        dest: "/etc/systemd/system/borg-backup.timer"
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      command: "systemctl daemon-reload"
+
+    - name: Enable and start backup timer
+      systemd:
+        name: borg-backup.timer
+        state: started
+        enabled: yes
