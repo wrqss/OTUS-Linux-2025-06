@@ -23,7 +23,7 @@ sudo exportfs -r && sudo exportfs -s && echo "5: OK" || echo "5: Failed"
 sudo apt install nfs-common && echo "1: OK" || echo "1: Failed"
 
 #Добавление строки в для монтирования в fstab
-echo "192.168.100.101:/srv/share/ /mnt nfs vers=3,noauto,x-systemd.automount 0 0" | sudo tee -a /etc/fstab /dev/null
+echo "192.168.100.107:/srv/share/ /mnt nfs vers=3,noauto,x-systemd.automount 0 0" | sudo tee -a /etc/fstab /dev/null
 
 #Перезапуск служб
 sudo systemctl daemon-reload  && sudo systemctl restart remote-fs.target && echo "2: OK" || echo "2: Failed"
