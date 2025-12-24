@@ -11,7 +11,7 @@ sudo chown -R nobody:nogroup /srv/share && echo "3: OK" || echo "3: Failed"
 sudo chmod 0777 /srv/share/upload && echo "4: OK" || echo "4: Failed"
 
 #Добавление в конфигурацию сервера
-echo "/srv/share 192.168.100.107/32(rw,sync,root_squash)" | sudo tee -a /etc/exports > /dev/null
+echo "/srv/share 192.168.100.110/32(rw,sync,root_squash)" | sudo tee -a /etc/exports > /dev/null
 
 #Проверка конфигурации
 sudo exportfs -r && sudo exportfs -s && echo "5: OK" || echo "5: Failed"
