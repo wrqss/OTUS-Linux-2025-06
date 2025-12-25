@@ -1,0 +1,72 @@
+- hosts: all
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [update-apt]
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - traceroute
+          - net-tools
+        state: present
+
+    - name: Ensure required dirs exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/cloud/cloud.cfg.d
+        - /etc/netplan
+
+    - name: Disable cloud-init networking (except inetRouter)
+      ansible.builtin.template:
+        src: 99-disable-network-config.cfg
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        mode: "0644"
+      when: ansible_hostname != "inetRouter"
+
+    - name: Place base netplan
+      ansible.builtin.template:
+        src: "50-cloud-init.yaml"
+        dest: "/etc/netplan/50-cloud-init.yaml"
+        mode: "0600"
+      when: ansible_hostname != "inetRouter"
+
+    - name: Add gateways (per host)
+      ansible.builtin.template:
+        src: "50-vagrant_{{ ansible_hostname }}.yaml"
+        dest: /etc/netplan/50-vagrant.yaml
+        mode: "0600"
+      notify: Apply netplan
+
+    - name: Enable IP forward on routers
+      ansible.builtin.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+      when: "'routers' in group_names"
+
+    - name: Install iptables-persistent on inetRouter
+      ansible.builtin.apt:
+        name: iptables-persistent
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: ansible_hostname == "inetRouter"
+
+    - name: Disable ufw if present
+      ansible.builtin.service_facts:
+    - ansible.builtin.systemd:
+        name: ufw.service
+        state: stopped
+        enabled: false
+      when: "'ufw.service' in ansible_facts.services"
+
+  handlers:
+    - name: Apply netplan
+      ansible.builtin.command: netplan apply

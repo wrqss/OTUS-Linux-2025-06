@@ -1,0 +1,139 @@
+# -*- mode: ruby -*-
+require 'ipaddr'
+
+MACHINES = {
+  inetRouter: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "inetRouter",
+    net: [
+      ["192.168.255.1", 2, "255.255.255.252", "router-net"],
+      ["192.168.11.10", 8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  centralRouter: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "centralRouter",
+    net: [
+      ["192.168.255.2",  2, "255.255.255.252", "router-net"],
+      ["192.168.0.1",    3, "255.255.255.240", "dir-net"],
+      ["192.168.0.33",   4, "255.255.255.240", "hw-net"],
+      ["192.168.0.65",   5, "255.255.255.192", "mgt-net"],
+      ["192.168.255.9",  6, "255.255.255.252", "office1-central"],
+      ["192.168.255.5",  7, "255.255.255.252", "office2-central"],
+      ["192.168.11.11",  8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  centralServer: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "centralServer",
+    net: [
+      ["192.168.0.2",    2, "255.255.255.240", "dir-net"],
+      ["192.168.11.12",  8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  office1Router: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "office1Router",
+    net: [
+      ["192.168.255.10", 2, "255.255.255.252", "office1-central"],
+      ["192.168.2.1",    3, "255.255.255.192", "dev1-net"],
+      ["192.168.2.65",   4, "255.255.255.192", "test1-net"],
+      ["192.168.2.129",  5, "255.255.255.192", "managers-net"],
+      ["192.168.2.193",  6, "255.255.255.192", "office1-net"],
+      ["192.168.11.20",  8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  office1Server: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "office1Server",
+    net: [
+      ["192.168.2.130",  2, "255.255.255.192", "managers-net"],
+      ["192.168.11.21",  8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  office2Router: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "office2Router",
+    net: [
+      ["192.168.255.6",  2, "255.255.255.252", "office2-central"],
+      ["192.168.1.1",    3, "255.255.255.128", "dev2-net"],
+      ["192.168.1.129",  4, "255.255.255.192", "test2-net"],
+      ["192.168.1.193",  5, "255.255.255.192", "office2-net"],
+      ["192.168.11.30",  8, "255.255.255.0",   "mynet"],
+    ]
+  },
+
+  office2Server: {
+    box_name: "generic/ubuntu2204",
+    vm_name:  "office2Server",
+    net: [
+      ["192.168.1.2",    2, "255.255.255.128", "dev2-net"],
+      ["192.168.11.31",  8, "255.255.255.0",   "mynet"],
+    ]
+  }
+}
+
+Vagrant.configure("2") do |config|
+  config.vm.box_check_update = false
+  config.ssh.insert_key = true
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # Общие настройки libvirt
+  config.vm.provider :libvirt do |lv|
+    lv.memory = 768
+    lv.cpus   = 1
+    lv.nic_model_type = "virtio"
+    lv.storage_pool_name = "default"
+  end
+
+  MACHINES.each do |name, spec|
+    config.vm.define name do |box|
+      box.vm.box      = spec[:box_name]
+      box.vm.hostname = spec[:vm_name]
+
+      # Сети: /30 -> veryisolated, остальные -> none; DHCP off
+      spec[:net].each do |ip, _slot, netmask, nname|
+        net     = IPAddr.new("#{ip}/#{netmask}")
+        netaddr = net.to_range.first.to_s
+        prefix  = net.prefix
+        network_name = nname || "net-#{netaddr}-#{prefix}"
+        forward = (prefix == 30) ? "veryisolated" : "none"
+
+        opts = {
+          ip: ip,
+          netmask: netmask,
+          libvirt__network_name: network_name,
+          libvirt__forward_mode: forward,
+          libvirt__dhcp_enabled: false
+        }
+        # доступ с хоста в общую mgmt-сеть 192.168.11.0/24
+        opts[:libvirt__host_ip] = "192.168.11.1" if ip.start_with?("192.168.11.")
+
+        box.vm.network "private_network", **opts
+      end
+
+      # root получает тот же ключ, что и vagrant (удобно для ansible/become)
+      box.vm.provision "shell", inline: <<-'SHELL'
+        set -eux
+        install -d -m 0700 /root/.ssh
+        [ -f /home/vagrant/.ssh/authorized_keys ] && \
+          install -m 0600 /home/vagrant/.ssh/authorized_keys /root/.ssh/authorized_keys || true
+      SHELL
+    end
+  end
+
+      config.vm.provision "ansible" do |ansible|
+        ansible.playbook = "noop.yml" # может быть пустым
+        ansible.groups = {
+          "routers" => %w[inetRouter centralRouter office1Router office2Router],
+          "servers" => %w[centralServer office1Server office2Server],
+           }
+       ansible.host_vars = { "centralServer" => { "role" => "core" } }
+       ansible.limit = "all"
+      end
+    end
