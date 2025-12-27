@@ -1,0 +1,9 @@
+---
+- name: netplan apply
+  command: netplan apply
+
+- name: restart frr
+  service:
+    name: frr
+    state: restarted
+    enabled: true

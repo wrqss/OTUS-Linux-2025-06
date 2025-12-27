@@ -1,0 +1,11 @@
+router_id_enable: true
+symmetric_routing: false
+
+ospf_area: 0
+ospf_hello: 10
+ospf_dead: 30
+
+ospf_cost_normal: 100
+ospf_cost_expensive: 1000
+
+frr_log_file: /var/log/frr/frr.log

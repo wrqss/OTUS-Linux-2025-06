@@ -1,0 +1,77 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+
+BOX = ENV.fetch("BOX", "generic/ubuntu2204") 
+
+MACHINES = {
+  router1: {
+    hostname: "router1",
+    nics: [
+      { net: "r1-r2", mac: "52:54:00:10:01:01" }, 
+      { net: "r1-r3", mac: "52:54:00:10:02:01" }, 
+      { net: "net1",  mac: "52:54:00:20:01:01" }
+    ]
+  },
+
+  router2: {
+    hostname: "router2",
+    nics: [
+      { net: "r1-r2", mac: "52:54:00:10:01:02" }, 
+      { net: "r2-r3", mac: "52:54:00:10:03:02" }, 
+      { net: "net2",  mac: "52:54:00:20:02:02" }
+    ]
+  },
+
+  router3: {
+    hostname: "router3",
+    nics: 
+      { net: "r2-r3", mac: "52:54:00:10:03:03" }, 
+      { net: "r1-r3", mac: "52:54:00:10:02:03" }, 
+      { net: "net3",  mac: "52:54:00:20:03:03" }
+    ]
+  }
+}
+
+LAB_NET_OPTS = {
+  libvirt__forward_mode: "veryisolated", 
+  libvirt__dhcp_enabled: false
+}
+
+Vagrant.configure("2") do |config|
+  config.vm.box = BOX
+
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+
+  MACHINES.each do |name, m|
+    config.vm.define name do |node|
+      node.vm.hostname = m[:hostname]
+
+      node.vm.provider :libvirt do |lv|
+        lv.cpus = 1
+        lv.memory = 768
+        lv.nested = true
+        lv.machine_virtual_size = 10
+      end
+
+      m[:nics].each do |nic|
+      node.vm.network "private_network", **LAB_NET_OPTS.merge(
+         libvirt__network_name: nic[:net],
+         mac: nic[:mac],
+         auto_config: false
+        )
+     end
+
+      if name == :router3
+        node.vm.provision "ansible" do |ansible|
+          ansible.playbook = "ansible/provision.yml"
+          ansible.groups = { "routers" => ["router1", "router2", "router3"] }
+          ansible.limit = "all"
+          ansible.become = true
+          ansible.compatibility_mode = "2.0"
+        end
+      end
+    end
+  end
+end

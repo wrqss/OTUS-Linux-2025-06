@@ -1,0 +1,27 @@
+router_id: 1.1.1.1
+netplan_ifaces:
+- name: r1r2
+  mac: '52:54:00:10:01:01'
+  addresses:
+  - 10.0.10.1/30
+  desc: r1-r2
+  ospf: true
+  stub: false
+- name: r1r3
+  mac: '52:54:00:10:02:01'
+  addresses:
+  - 10.0.12.1/30
+  desc: r1-r3
+  ospf: true
+  stub: false
+- name: lan1
+  mac: '52:54:00:20:01:01'
+  addresses:
+  - 192.168.10.1/24
+  desc: net_router1
+  ospf: true
+  stub: true
+ospf_networks:
+- 10.0.10.0/30
+- 10.0.12.0/30
+- 192.168.10.0/24

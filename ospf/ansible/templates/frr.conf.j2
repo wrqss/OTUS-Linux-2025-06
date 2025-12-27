@@ -1,0 +1,38 @@
+!
+frr defaults traditional
+hostname {{ ansible_hostname }}
+log syslog informational
+no ipv6 forwarding
+service integrated-vtysh-config
+!
+{% for i in netplan_ifaces if i.ospf %}
+interface {{ i.name }}
+ description {{ i.desc }}
+ ip ospf mtu-ignore
+{% if i.name == 'r1r2' %}
+{% if ansible_hostname == 'router1' %}
+ ip ospf cost {{ ospf_cost_expensive }}
+{% elif ansible_hostname == 'router2' and symmetric_routing | bool %}
+ ip ospf cost {{ ospf_cost_expensive }}
+{% else %}
+ !ip ospf cost {{ ospf_cost_normal }}
+{% endif %}
+{% endif %}
+ ip ospf hello-interval {{ ospf_hello }}
+ ip ospf dead-interval {{ ospf_dead }}
+!
+{% endfor %}
+router ospf
+{% if router_id_enable | bool %}
+ router-id {{ router_id }}
+{% endif %}
+{% for i in netplan_ifaces if i.ospf and i.stub %}
+ passive-interface {{ i.name }}
+{% endfor %}
+{% for n in ospf_networks %}
+ network {{ n }} area {{ ospf_area }}
+{% endfor %}
+!
+log file {{ frr_log_file }}
+default-information originate always
+!

@@ -1,0 +1,95 @@
+---
+- name: OSPF 
+  hosts: routers
+  become: true
+  vars_files:
+    - defaults/main.yml
+
+  handlers:
+    - import_tasks: handlers/main.yml
+
+  tasks:
+    - name: Install base tools
+      apt:
+        name:
+          - vim
+          - traceroute
+          - tcpdump
+          - net-tools
+          - curl
+          - ca-certificates
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Stop and disable UFW
+      service:
+        name: ufw
+        state: stopped
+        enabled: false
+      ignore_errors: true
+
+    - name: Configure netplan for lab interfaces
+      template:
+        src: 50-otus.yaml.j2
+        dest: /etc/netplan/50-otus.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: netplan apply
+
+    - name: Add FRR apt key
+      apt_key:
+        url: "https://deb.frrouting.org/frr/keys.asc"
+        state: present
+
+    - name: Add FRR repository
+      apt_repository:
+        repo: "deb https://deb.frrouting.org/frr {{ ansible_distribution_release }} frr-stable"
+        state: present
+
+    - name: Install FRR packages
+      apt:
+        name:
+          - frr
+          - frr-pythontools
+        state: present
+        update_cache: true
+
+    - name: Enable IPv4 forwarding
+      sysctl:
+        name: net.ipv4.conf.all.forwarding
+        value: "1"
+        state: present
+        reload: true
+
+    - name: Disable rp_filter (allow asymmetric routing)
+      sysctl:
+        name: net.ipv4.conf.all.rp_filter
+        value: "0"
+        state: present
+        reload: true
+
+    - name: Enable zebra and ospfd
+      template:
+        src: daemons.j2
+        dest: /etc/frr/daemons
+        owner: frr
+        group: frr
+        mode: "0640"
+      notify: restart frr
+
+    - name: Configure FRR (OSPF)
+      template:
+        src: frr.conf.j2
+        dest: /etc/frr/frr.conf
+        owner: frr
+        group: frr
+        mode: "0640"
+      notify: restart frr
+
+    - name: Ensure FRR is started and enabled
+      service:
+        name: frr
+        state: started
+        enabled: true

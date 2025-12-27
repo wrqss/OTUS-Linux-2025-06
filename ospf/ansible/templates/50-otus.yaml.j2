@@ -1,0 +1,17 @@
+# Managed by Ansible (OTUS OSPF lab)
+# This file configures only lab interfaces (management NIC remains unchanged).
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{% for i in netplan_ifaces %}
+    {{ i.name }}:
+      match:
+        macaddress: "{{ i.mac }}"
+      set-name: "{{ i.name }}"
+      addresses:
+{% for a in i.addresses %}
+        - "{{ a }}"
+{% endfor %}
+      optional: true
+{% endfor %}
