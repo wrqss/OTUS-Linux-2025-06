@@ -1,0 +1,308 @@
+---
+- name: OpenVPN TLS server (easy-rsa in /etc/openvpn)
+  hosts: openvpn_server
+  become: true
+  vars:
+    openvpn_server_instance: "server"
+    openvpn_port: 1207
+    openvpn_proto: "udp"
+    openvpn_dev: "tun"
+    vpn_network: "10.10.10.0"
+    vpn_netmask: "255.255.255.0"
+    server_req_cn: "rasvpn"
+    client_req_cn: "client"
+
+    ccd_dir: /etc/openvpn/client
+    ccd_client_name: client
+
+  tasks:
+    - name: apt update (with retries)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        lock_timeout: 300
+      register: apt_update
+      retries: 5
+      delay: 10
+      until: apt_update is succeeded
+
+    - name: Install packages (server)
+      ansible.builtin.apt:
+        name:
+          - openvpn
+          - easy-rsa
+        state: present
+
+    - name: Ensure /etc/openvpn exists
+      ansible.builtin.file:
+        path: /etc/openvpn
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # --- PKI (easy-rsa) ---
+    - name: Init PKI (only once)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa init-pki
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki
+
+    - name: Build CA (nopass, batch)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa --batch build-ca nopass
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/ca.crt
+
+    - name: Generate server request/key (nopass, batch)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa --batch gen-req server nopass
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/reqs/server.req
+      environment:
+        EASYRSA_REQ_CN: "{{ server_req_cn }}"
+
+    - name: Sign server certificate (batch)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa --batch sign-req server server
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/issued/server.crt
+
+    - name: Generate Diffie-Hellman params
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa gen-dh
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/dh.pem
+
+    - name: Generate client request/key (nopass, batch)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa --batch gen-req client nopass
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/reqs/client.req
+      environment:
+        EASYRSA_REQ_CN: "{{ client_req_cn }}"
+
+    - name: Sign client certificate (batch)
+      ansible.builtin.command: /usr/share/easy-rsa/easyrsa --batch sign-req client client
+      args:
+        chdir: /etc/openvpn
+        creates: /etc/openvpn/pki/issued/client.crt
+
+    # --- CCD / iroute ---
+    - name: Ensure CCD directory exists
+      ansible.builtin.file:
+        path: "{{ ccd_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write CCD file with iroute
+      ansible.builtin.copy:
+        dest: "{{ ccd_dir }}/{{ ccd_client_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          iroute 10.10.10.0 255.255.255.0
+      notify: Restart openvpn server
+
+    # --- OpenVPN server.conf ---
+    - name: Write /etc/openvpn/server.conf
+      ansible.builtin.copy:
+        dest: /etc/openvpn/server.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          port {{ openvpn_port }}
+          proto {{ openvpn_proto }}
+          dev {{ openvpn_dev }}
+          ca /etc/openvpn/pki/ca.crt
+          cert /etc/openvpn/pki/issued/server.crt
+          key /etc/openvpn/pki/private/server.key
+          dh /etc/openvpn/pki/dh.pem
+          server {{ vpn_network }} {{ vpn_netmask }}
+          ifconfig-pool-persist ipp.txt
+          client-to-client
+          client-config-dir {{ ccd_dir }}
+          keepalive 10 120
+          comp-lzo
+          persist-key
+          persist-tun
+          status /var/log/openvpn-status.log
+          log /var/log/openvpn.log
+          verb 3
+      notify: Restart openvpn server
+
+    # --- systemd unit from template ---
+    - name: Install systemd unit from template
+      ansible.builtin.template:
+        src: openvpn@.service.j2
+        dest: /etc/systemd/system/openvpn@.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart openvpn server
+
+    - name: Enable and start openvpn@server
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_server_instance }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # --- Export certs/keys for client play (facts on server host) ---
+    - name: Slurp CA cert
+      ansible.builtin.slurp:
+        src: /etc/openvpn/pki/ca.crt
+      register: slurp_ca
+
+    - name: Slurp client cert
+      ansible.builtin.slurp:
+        src: /etc/openvpn/pki/issued/client.crt
+      register: slurp_client_crt
+
+    - name: Slurp client key
+      ansible.builtin.slurp:
+        src: /etc/openvpn/pki/private/client.key
+      register: slurp_client_key
+
+    - name: Save exported materials as facts on server
+      ansible.builtin.set_fact:
+        openvpn_ca_crt_b64: "{{ slurp_ca.content }}"
+        openvpn_client_crt_b64: "{{ slurp_client_crt.content }}"
+        openvpn_client_key_b64: "{{ slurp_client_key.content }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart openvpn server
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_server_instance }}"
+        state: restarted
+        enabled: true
+
+
+- name: OpenVPN TLS client
+  hosts: openvpn_client
+  become: true
+  vars:
+    openvpn_client_instance: "client"
+    openvpn_port: 1207
+    openvpn_proto: "udp"
+    openvpn_dev: "tun"
+
+    # remote берём из inventory сервера
+    openvpn_remote_ip: "{{ hostvars[groups['openvpn_server'][0]].ansible_host | default(groups['openvpn_server'][0]) }}"
+
+    route_net: "192.168.100.110"
+    route_mask: "255.255.255.0"
+
+    server_host: "{{ groups['openvpn_server'][0] }}"
+
+  tasks:
+    - name: apt update (with retries)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        lock_timeout: 300
+      register: apt_update
+      retries: 5
+      delay: 10
+      until: apt_update is succeeded
+
+    - name: Install packages (client)
+      ansible.builtin.apt:
+        name:
+          - openvpn
+        state: present
+
+    - name: Ensure /etc/openvpn exists
+      ansible.builtin.file:
+        path: /etc/openvpn
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Кладём файлы рядом с client.conf, чтобы пути ./ca.crt и т.п. работали
+    - name: Copy ca.crt from server
+      ansible.builtin.copy:
+        dest: /etc/openvpn/ca.crt
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ hostvars[server_host].openvpn_ca_crt_b64 | b64decode }}"
+
+    - name: Copy client.crt from server
+      ansible.builtin.copy:
+        dest: /etc/openvpn/client.crt
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ hostvars[server_host].openvpn_client_crt_b64 | b64decode }}"
+
+    - name: Copy client.key from server
+      ansible.builtin.copy:
+        dest: /etc/openvpn/client.key
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ hostvars[server_host].openvpn_client_key_b64 | b64decode }}"
+
+    - name: Write /etc/openvpn/client.conf
+      ansible.builtin.copy:
+        dest: /etc/openvpn/client.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          dev {{ openvpn_dev }}
+          proto {{ openvpn_proto }}
+          remote {{ openvpn_remote_ip }} {{ openvpn_port }}
+          client
+          resolv-retry infinite
+          remote-cert-tls server
+          ca ./ca.crt
+          cert ./client.crt
+          key ./client.key
+          route {{ route_net }} {{ route_mask }}
+          persist-key
+          persist-tun
+          comp-lzo
+          verb 3
+      notify: Restart openvpn client
+
+    - name: Install systemd unit from template
+      ansible.builtin.template:
+        src: openvpn@.service.j2
+        dest: /etc/systemd/system/openvpn@.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart openvpn client
+
+    - name: Enable and start openvpn@client
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_client_instance }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart openvpn client
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_client_instance }}"
+        state: restarted
+        enabled: true
