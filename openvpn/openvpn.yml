@@ -1,0 +1,231 @@
+---
+- name: OpenVPN static-key server (tap)
+  hosts: openvpn_server
+  become: true
+  vars:
+    openvpn_instance: "server"              
+    openvpn_port: 1194
+    openvpn_proto: "udp"
+    openvpn_dev: "tap"
+    vpn_server_ip: "10.10.10.1"
+    vpn_netmask: "255.255.255.0"
+
+  tasks:
+    - name: apt update + install packages
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - openvpn
+          - iperf3
+          - selinux-utils
+        state: present
+
+    - name: setenforce 0 (ignore if not applicable)
+      ansible.builtin.command: setenforce 0
+      register: setenforce_res
+      failed_when: false
+      changed_when: setenforce_res.rc == 0
+
+    - name: Ensure /etc/openvpn exists
+      ansible.builtin.file:
+        path: /etc/openvpn
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Generate static.key
+      ansible.builtin.command: openvpn --genkey secret /etc/openvpn/static.key
+      args:
+        creates: /etc/openvpn/static.key
+
+    - name: Set key permissions
+      ansible.builtin.file:
+        path: /etc/openvpn/static.key
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Slurp static.key on server
+      ansible.builtin.slurp:
+        src: /etc/openvpn/static.key
+      register: slurped_key
+
+    - name: Save key as fact on server host
+      ansible.builtin.set_fact:
+        openvpn_static_key_b64: "{{ slurped_key.content }}"
+
+    - name: Write /etc/openvpn/server.conf (server)
+      ansible.builtin.copy:
+        dest: /etc/openvpn/server.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          port {{ openvpn_port }}
+          proto {{ openvpn_proto }}
+          dev {{ openvpn_dev }}
+          ifconfig {{ vpn_server_ip }} {{ vpn_netmask }}
+          topology subnet
+
+          secret /etc/openvpn/static.key 0
+          cipher AES-256-CBC
+          auth SHA256
+
+          allow-compression no
+          ;comp-lzo
+
+          verb 3
+          log /var/log/openvpn.log
+      notify:
+        - Restart openvpn instance
+
+    - name: Install systemd unit /etc/systemd/system/openvpn@.service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/openvpn@.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=OpenVPN Tunneling Application On %I
+          After=network.target
+
+          [Service]
+          Type=notify
+          PrivateTmp=true
+          ExecStart=/usr/sbin/openvpn --cd /etc/openvpn/ --config %i.conf
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+        - Restart openvpn instance
+
+    - name: Enable and start openvpn@server
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_instance }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart openvpn instance
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_instance }}"
+        state: restarted
+        enabled: true
+
+
+- name: OpenVPN static-key client (tap)
+  hosts: openvpn_client
+  become: true
+  vars:
+    openvpn_instance: "client"            
+    openvpn_port: 1194
+    openvpn_proto: "udp"
+    openvpn_dev: "tap"
+    vpn_client_ip: "10.10.10.2"
+    vpn_netmask: "255.255.255.0"
+
+    # Remote IP берем из openvpn_server (ansible_host)
+    openvpn_remote_ip: "{{ hostvars[groups['openvpn_server'][0]].ansible_host | default(groups['openvpn_server'][0]) }}"
+
+  tasks:
+    - name: apt update + install packages
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - openvpn
+          - iperf3
+          - selinux-utils
+        state: present
+
+    - name: setenforce 0 (ignore if not applicable)
+      ansible.builtin.command: setenforce 0
+      register: setenforce_res
+      failed_when: false
+      changed_when: setenforce_res.rc == 0
+
+    - name: Ensure /etc/openvpn exists
+      ansible.builtin.file:
+        path: /etc/openvpn
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy static.key from server (via localhost fact)
+      ansible.builtin.copy:
+        dest: /etc/openvpn/static.key
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ hostvars[groups['openvpn_server'][0]].openvpn_static_key_b64 | b64decode }}"
+
+    - name: Write /etc/openvpn/server.conf (client config, instance name 'server')
+      ansible.builtin.copy:
+        dest: /etc/openvpn/server.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          remote {{ openvpn_remote_ip }} {{ openvpn_port }}
+          proto {{ openvpn_proto }}
+          dev {{ openvpn_dev }}
+          ifconfig {{ vpn_client_ip }} {{ vpn_netmask }}
+
+          secret /etc/openvpn/static.key 1
+          cipher AES-256-CBC
+          auth SHA256
+
+          allow-compression no
+          ;comp-lzo
+
+          verb 3
+      notify:
+        - Restart openvpn instance
+
+    - name: Install systemd unit /etc/systemd/system/openvpn@.service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/openvpn@.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=OpenVPN Tunneling Application On %I
+          After=network.target
+
+          [Service]
+          Type=notify
+          PrivateTmp=true
+          ExecStart=/usr/sbin/openvpn --cd /etc/openvpn/ --config %i.conf
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+        - Restart openvpn instance
+
+    - name: Enable and start openvpn@server
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_instance }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart openvpn instance
+      ansible.builtin.systemd:
+        name: "openvpn@{{ openvpn_instance }}"
+        state: restarted
+        enabled: true
