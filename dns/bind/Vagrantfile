@@ -1,0 +1,45 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "centos/7"
+
+  config.vm.provision "ansible" do |ansible|
+    #ansible.verbose  = "vvv"
+    ansible.playbook = "provisioning/playbook.yml"
+    ansible.become   = true
+  end
+
+  config.vm.provider :libvirt do |lv|
+    lv.memory = 256
+    lv.cpus   = 1
+  end
+
+  DNS_NET = {
+    libvirt__network_name: "dns",
+    libvirt__netmask: "255.255.255.0",
+    libvirt__forward_mode: "none",
+    libvirt__dhcp_enabled: false
+  }
+
+  config.vm.define "ns01" do |ns01|
+    ns01.vm.hostname = "ns01"
+    ns01.vm.network "private_network", **DNS_NET.merge(ip: "192.168.50.10")
+  end
+
+  config.vm.define "ns02" do |ns02|
+    ns02.vm.hostname = "ns02"
+    ns02.vm.network "private_network", **DNS_NET.merge(ip: "192.168.50.11")
+  end
+
+  config.vm.define "client" do |client|
+    client.vm.hostname = "client"
+    client.vm.network "private_network", **DNS_NET.merge(ip: "192.168.50.15")
+  end
+  
+  config.vm.define "client2" do |client|
+    client.vm.hostname = "client2"
+    client.vm.network "private_network", **DNS_NET.merge(ip: "192.168.50.16")
+  end
+end
+
