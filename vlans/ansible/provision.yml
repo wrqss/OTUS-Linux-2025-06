@@ -1,0 +1,157 @@
+---
+- name: Base set up
+  hosts: all
+  become: yes
+  tasks:
+    - name: install software on CentOS
+      yum:
+        name:
+          - vim
+          - traceroute
+          - tcpdump
+          - net-tools
+          - NetworkManager
+          - network-scripts
+        state: present
+        update_cache: true
+      when: ansible_os_family == "RedHat"
+      tags: [base]
+
+    - name: install software on Debian-based
+      apt:
+        name:
+          - vim
+          - traceroute
+          - tcpdump
+          - net-tools
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+      tags: [base]
+
+# VLAN 1 (RHEL-based): testClient1/testServer1
+- name: set up vlan1
+  hosts: clients_centos
+  become: yes
+  tasks:
+    - name: create ifcfg-vlan{{ vlan_id }}
+      template:
+        src: ifcfg-vlan.j2
+        dest: /etc/sysconfig/network-scripts/ifcfg-vlan{{ vlan_id }}
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [vlan]
+
+    - name: restart NetworkManager (vlan)
+      service:
+        name: NetworkManager
+        state: restarted
+        enabled: true
+      tags: [vlan]
+
+    - name: wait for host to come back
+      wait_for_connection:
+        delay: 2
+        timeout: 60
+      tags: [vlan]
+
+# VLAN 2 (Ubuntu): testClient2/testServer2
+- name: set up vlan2
+  hosts: clients_ubuntu
+  become: yes
+  tasks:
+    - name: pick vlan parent interface (first non-lo without ipv4)
+      set_fact:
+        vlan_parent_iface: "{{ item }}"
+      when:
+        - item != "lo"
+        - hostvars[inventory_hostname]['ansible_' + item].ipv4 is not defined
+      loop: "{{ ansible_interfaces }}"
+      tags: [vlan]
+
+    - name: write netplan vlan config (separate file)
+      template:
+        src: 60-vlan-netplan.yaml.j2
+        dest: /etc/netplan/60-vlan.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [vlan]
+
+    - name: netplan apply (async to avoid ssh drop)
+      command: netplan apply
+      async: 45
+      poll: 0
+      tags: [vlan]
+
+    - name: wait for connection after netplan
+      wait_for_connection:
+        delay: 2
+        timeout: 90
+      tags: [vlan]
+
+# Bond (inetRouter <-> centralRouter)
+- name: set up bond0
+  hosts: inetRouter,centralRouter
+  become: yes
+  tasks:
+    - name: configure bond slaves (eth1, eth2)
+      template:
+        src: ifcfg-eth-bond-slave.j2
+        dest: "/etc/sysconfig/network-scripts/ifcfg-{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - eth1
+        - eth2
+      tags: [bond]
+
+    - name: configure bond0
+      template:
+        src: ifcfg-bond0.j2
+        dest: /etc/sysconfig/network-scripts/ifcfg-bond0
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [bond]
+
+    - name: restart NetworkManager (bond)
+      service:
+        name: NetworkManager
+        state: restarted
+        enabled: true
+      tags: [bond]
+
+    - name: wait for host to come back
+      wait_for_connection:
+        delay: 2
+        timeout: 60
+      tags: [bond]
+
+- name: set up office1-central addressing
+  hosts: centralRouter,office1Router
+  become: yes
+  tasks:
+    - name: configure office1-central iface
+      template:
+        src: ifcfg-office1-central.j2
+        dest: "/etc/sysconfig/network-scripts/ifcfg-{{ 'eth3' if inventory_hostname == 'centralRouter' else 'eth1' }}"
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [office]
+
+    - name: restart NetworkManager (office1-central)
+      service:
+        name: NetworkManager
+        state: restarted
+        enabled: true
+      tags: [office]
+
+    - name: wait for host to come back
+      wait_for_connection:
+        delay: 2
+        timeout: 60
+      tags: [office]

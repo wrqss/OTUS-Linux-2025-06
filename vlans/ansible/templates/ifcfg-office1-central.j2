@@ -1,0 +1,6 @@
+DEVICE={{ 'eth3' if inventory_hostname == 'centralRouter' else 'eth1' }}
+ONBOOT=yes
+BOOTPROTO=static
+IPADDR={{ office_central_ip }}
+NETMASK=255.255.255.252
+NM_CONTROLLED=yes

@@ -1,0 +1,164 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+VAGRANTFILE_API_VERSION = "2"
+
+CENTOS_BOX   = ENV.fetch("CENTOS_BOX", "almalinux/8")
+#CENTOS_VER   = ENV.fetch("CENTOS_VER", "20210210.0")
+UBUNTU_BOX   = ENV.fetch("UBUNTU_BOX", "generic/ubuntu2204")
+#UBUNTU_VER   = ENV.fetch("UBUNTU_VER", "20220411.2.0")
+
+# Вспомогательные L2-сети (только чтобы libvirt создал виртуальные свитчи).
+# В гостях эти IP не используются, т.к. auto_config: false.
+NETS = {
+  "router-net"      => { netmask: "255.255.255.0" }, # bond links
+  "office1-central" => { netmask: "255.255.255.0" },
+  "vlan1"           => { netmask: "255.255.255.0" },
+  "vlan2"           => { netmask: "255.255.255.0" },
+  "testLAN"         => { netmask: "255.255.255.0" },
+  "mgmt"            => { netmask: "255.255.255.0" }, # ansible static 192.168.56.0/24
+}
+
+MACHINES = {
+  inetRouter: {
+    box_name: CENTOS_BOX,
+ #   box_version: CENTOS_VER,
+    vm_name: "inetRouter",
+    net: [
+      # 2 линка для bond (auto_config false)
+      { ip: "172.16.10.11", netmask: NETS["router-net"][:netmask], auto_config: false,
+        libvirt__network_name: "router-net", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "172.16.10.12", netmask: NETS["router-net"][:netmask], auto_config: false,
+        libvirt__network_name: "router-net", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      { ip: "192.168.56.10", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  centralRouter: {
+    box_name: CENTOS_BOX,
+  #  box_version: CENTOS_VER,
+    vm_name: "centralRouter",
+    net: [
+      # 2 линка для bond (auto_config false)
+      { ip: "172.16.10.21", netmask: NETS["router-net"][:netmask], auto_config: false,
+        libvirt__network_name: "router-net", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "172.16.10.22", netmask: NETS["router-net"][:netmask], auto_config: false,
+        libvirt__network_name: "router-net", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      # линк в office1 (в гостях настроим 192.168.255.9/30 через Ansible)
+      { ip: "172.16.11.9", netmask: NETS["office1-central"][:netmask], auto_config: false,
+        libvirt__network_name: "office1-central", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      { ip: "192.168.56.11", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  office1Router: {
+    box_name: CENTOS_BOX,
+   # box_version: CENTOS_VER,
+    vm_name: "office1Router",
+    net: [
+      # линк в centralRouter (в гостях настроим 192.168.255.10/30 через Ansible)
+      { ip: "172.16.11.10", netmask: NETS["office1-central"][:netmask], auto_config: false,
+        libvirt__network_name: "office1-central", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      # дополнительные порты под VLAN/LACP (как в методичке) :contentReference[oaicite:8]{index=8}
+      { ip: "172.16.12.20", netmask: NETS["vlan1"][:netmask], auto_config: false,
+        libvirt__network_name: "vlan1", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "172.16.12.21", netmask: NETS["vlan1"][:netmask], auto_config: false,
+        libvirt__network_name: "vlan1", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      { ip: "172.16.13.20", netmask: NETS["vlan2"][:netmask], auto_config: false,
+        libvirt__network_name: "vlan2", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "172.16.13.21", netmask: NETS["vlan2"][:netmask], auto_config: false,
+        libvirt__network_name: "vlan2", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+
+      { ip: "192.168.56.20", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  testClient1: {
+    box_name: CENTOS_BOX,
+    #box_version: CENTOS_VER,
+    vm_name: "testClient1",
+    net: [
+      { ip: "172.16.14.21", netmask: NETS["testLAN"][:netmask], auto_config: false,
+        libvirt__network_name: "testLAN", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "192.168.56.21", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  testServer1: {
+    box_name: CENTOS_BOX,
+   # box_version: CENTOS_VER,
+    vm_name: "testServer1",
+    net: [
+      { ip: "172.16.14.22", netmask: NETS["testLAN"][:netmask], auto_config: false,
+        libvirt__network_name: "testLAN", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "192.168.56.22", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  testClient2: {
+    box_name: UBUNTU_BOX,
+    #box_version: UBUNTU_VER,
+    vm_name: "testClient2",
+    net: [
+      { ip: "172.16.14.31", netmask: NETS["testLAN"][:netmask], auto_config: false,
+        libvirt__network_name: "testLAN", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "192.168.56.31", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+
+  testServer2: {
+    box_name: UBUNTU_BOX,
+    #box_version: UBUNTU_VER,
+    vm_name: "testServer2",
+    net: [
+      { ip: "172.16.14.32", netmask: NETS["testLAN"][:netmask], auto_config: false,
+        libvirt__network_name: "testLAN", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+      { ip: "192.168.56.32", netmask: NETS["mgmt"][:netmask],
+        libvirt__network_name: "mgmt", libvirt__forward_mode: "none", libvirt__dhcp_enabled: false },
+    ]
+  },
+}
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  MACHINES.each do |boxname, boxconfig|
+    config.vm.define boxname do |box|
+      box.vm.box = boxconfig[:box_name]
+      box.vm.box_version = boxconfig[:box_version]
+      box.vm.hostname = boxconfig[:vm_name]
+
+      box.vm.provider :libvirt do |lv|
+        lv.memory = 1024
+        lv.cpus = 2
+        lv.nic_model_type = "virtio"
+        lv.management_network_name = "vagrant-libvirt"    
+        lv.management_network_address = "192.168.121.0/24" 
+        lv.management_network_mode = "nat"                 
+        lv.management_network_autostart = true        
+      end
+
+      if boxconfig[:vm_name] == "testServer2"
+        box.vm.provision "ansible" do |ansible|
+          ansible.playbook = "ansible/provision.yml"
+          ansible.inventory_path = "ansible/hosts.ini"
+          ansible.limit = "all"
+          ansible.host_key_checking = false
+        end
+      end
+
+      boxconfig[:net].each do |ipconf|
+        box.vm.network "private_network", **ipconf
+      end
+    end
+  end
+end
