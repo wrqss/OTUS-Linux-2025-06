@@ -1,0 +1,54 @@
+---
+- name: Configure FreeIPA client on Ubuntu
+  hosts: all
+  become: yes
+
+  vars:
+    ipa_domain: "otus.lan"
+    ipa_realm: "OTUS.LAN"
+    ipa_server_fqdn: "ipa.otus.lan"
+    ipa_principal: "admin"
+    ipa_admin_password: "{{ vault_ipa_admin_password }}"   # хранить в ansible-vault
+    timezone_name: "Europe/Moscow"
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - vim
+          - chrony
+          - freeipa-client
+        state: present
+        update_cache: true
+
+    - name: Set timezone
+      ansible.builtin.timezone:
+        name: "{{ timezone_name }}"
+
+    - name: Enable and start chrony
+      ansible.builtin.service:
+        name: chrony
+        state: started
+        enabled: true
+
+    - name: Check if IPA client already configured
+      ansible.builtin.stat:
+        path: /etc/ipa/default.conf
+      register: ipa_conf
+
+    - name: Enroll host to IPA (first time only) with safe diagnostics
+      block:
+        - name: Run ipa-client-install (secret output hidden)
+          ansible.builtin.command: >
+            ipa-client-install
+            --unattended
+            --mkhomedir
+            --domain={{ ipa_domain }}
+            --realm={{ ipa_realm }}
+            --server={{ ipa_server_fqdn }}
+            --principal={{ ipa_principal }}
+            --password={{ ipa_admin_password }}
+            --no-ntp
+          register: enroll_result
+          when: not ipa_conf.stat.exists
+          no_log: true
