@@ -178,7 +178,7 @@ barman@nfs:/home/wrqs$ psql -h 192.168.100.104 -U barman -c "IDENTIFY_SYSTEM" re
 (1 row)
 ```
 4. Добавляем конфигурацию /etc/barman.conf и /etc/barman.d/node1.conf
-5. Проверка работы barman:
+5. Проверка работы barman и запуск бекапа
 
 ```
 root@nfs:/home/wrqs# barman check node1
@@ -190,19 +190,38 @@ Server node1:
         replication slot: OK
         directories: OK
         retention policy settings: OK
-        backup maximum age: FAILED (interval provided: 4 days, latest backup age: No available backups)
-        backup minimum size: OK (0 B)
+        backup maximum age: OK (interval provided: 4 days, latest backup age: 1 minute, 23 seconds)
+        backup minimum size: OK (36.8 MiB)
         wal maximum age: OK (no last_wal_maximum_age provided)
-        wal size: OK (0 B)
+        wal size: OK (16.2 KiB)
         compression settings: OK
         failed backups: OK (there are 0 failed backups)
-        minimum redundancy requirements: FAILED (have 0 backups, expected at least 1)
+        minimum redundancy requirements: OK (have 1 backups, expected at least 1)
         pg_basebackup: OK
         pg_basebackup compatible: OK
         pg_basebackup supports tablespaces mapping: OK
-        systemid coherence: OK (no system Id stored on disk)
+        systemid coherence: OK
         pg_receivexlog: OK
         pg_receivexlog compatible: OK
         receive-wal running: OK
         archiver errors: OK
+root@nfs:/home/wrqs# barman backup --wait node1
+Starting backup using postgres method for server node1 in /var/lib/barman/node1/base/20260108T161125
+Backup start at LSN: 0/8000060 (000000010000000000000008, 00000060)
+Starting backup copy via pg_basebackup for 20260108T161125
+WARNING: pg_basebackup does not copy the PostgreSQL configuration files that reside outside PGDATA. Please manually backup the following files:
+        /etc/postgresql/16/main/postgresql.conf
+        /etc/postgresql/16/main/pg_hba.conf
+        /etc/postgresql/16/main/pg_ident.conf
+
+Copy done (time: 4 seconds)
+Finalising the backup.
+Backup size: 36.8 MiB
+Backup end at LSN: 0/A000060 (00000001000000000000000A, 00000060)
+Backup completed (start time: 2026-01-08 16:11:25.828077, elapsed time: 5 seconds)
+Waiting for the WAL file 00000001000000000000000A from server 'node1'
+Processing xlog segments from streaming for node1
+        000000010000000000000008
+        000000010000000000000009
+        00000001000000000000000A
 ```
