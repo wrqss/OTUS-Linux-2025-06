@@ -3,9 +3,9 @@
 #### Настройка hot_standby репликации с использованием слотов
 
 Перед настройкой репликации необходимо установить postgres-server на хосты node1 и node2:
-1) Устанавливаем postgresql-server 16: apt install postgresql postgresql-contrib
-2) Запускаем postgresql-server: systemctl start postgresql
-3) Добавляем postgresql-server в автозагрузку:  systemctl enable postgresql
+1) Устанавливаем postgresql-server 16: `apt install postgresql postgresql-contrib`
+2) Запускаем postgresql-server: `systemctl start postgresql`
+3) Добавляем postgresql-server в автозагрузку:  `systemctl enable postgresql`
 
 
 Далее приступаем к настройке репликации: 
